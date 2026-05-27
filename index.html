@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>QC REALTIME WEBCAM</title>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Noto+Sans+KR:wght@400;700;900&family=JetBrains+Mono:wght@400;600&display=swap');
+:root{
+  --bg:#0a0c0f;--surface:#111418;--border:#1e2530;
+  --good:#00ff88;--bad:#ff3355;--accent:#00aaff;
+  --text:#e0e8f0;--muted:#4a5568;
+  --mono:'JetBrains Mono',monospace;
+  --sans:'Noto Sans KR',sans-serif;
+  --display:'Bebas Neue',cursive;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+/* 헤더 */
+header{background:rgba(10,12,15,.97);border-bottom:1px solid var(--border);padding:0 14px;height:48px;display:flex;align-items:center;gap:10px;flex-shrink:0;z-index:100}
+.logo{font-family:var(--display);font-size:20px;letter-spacing:3px;color:var(--accent)}
+.logo em{color:var(--text);font-style:normal}
+.hd-sub{font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:1.5px}
+.hd-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+.led{width:8px;height:8px;border-radius:50%;background:var(--muted);transition:all .3s;flex-shrink:0}
+.led.on{background:var(--good);box-shadow:0 0 8px var(--good);animation:blink 2s infinite}
+.led.loading{background:#f0c040;box-shadow:0 0 8px #f0c040;animation:blink .6s infinite}
+.led.err{background:var(--bad);box-shadow:0 0 8px var(--bad)}
+.hd-status{font-family:var(--mono);font-size:10px;color:var(--muted)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* 카메라 영역 */
+.cam-wrap{flex:1;position:relative;background:#000;overflow:hidden;min-height:0;display:block}
+#video{width:100%;height:100%;object-fit:cover;display:block;position:absolute;inset:0}
+#overlay{position:absolute;inset:0;z-index:4;touch-action:none}
+.defect-flash{position:absolute;inset:0;background:rgba(255,51,85,.2);pointer-events:none;opacity:0;transition:opacity .1s;z-index:5}
+.defect-flash.go{opacity:1}
+.cam-ph{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:#333;z-index:3;pointer-events:none}
+.cam-ph .big{font-size:48px;opacity:.35}
+.cam-ph p{font-size:12px;color:#3a4050;text-align:center;line-height:1.7;font-family:var(--mono)}
+.init-overlay{position:absolute;inset:0;background:rgba(10,12,15,.93);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:50}
+.init-overlay.hide{display:none}
+.spinner{width:38px;height:38px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.init-msg{font-family:var(--mono);font-size:11px;color:var(--accent);letter-spacing:2px;animation:blink 1s infinite}
+
+/* ROI 조정 안내 */
+.roi-hint{position:absolute;top:8px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.65);border:1px solid rgba(255,255,255,.15);border-radius:6px;padding:4px 12px;font-size:10px;color:#aaa;font-family:var(--mono);letter-spacing:.5px;z-index:6;pointer-events:none;white-space:nowrap;display:none}
+.roi-hint.show{display:block}
+
+/* HUD */
+.hud{background:rgba(10,12,15,.97);border-top:1px solid var(--border);padding:5px 10px;flex-shrink:0}
+.time-row{display:flex;gap:4px;margin-bottom:4px}
+.time-chip{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:3px 6px}
+.tc-label{font-family:var(--mono);font-size:7px;color:var(--muted);letter-spacing:.8px;margin-bottom:1px}
+.tc-val{font-family:var(--mono);font-size:9px;color:var(--text)}
+.mini-stats{display:flex;gap:4px;margin-bottom:4px}
+.mini-stat{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:4px 6px;text-align:center}
+.ms-val{font-family:var(--mono);font-size:15px;font-weight:600}
+.ms-val.blue{color:var(--accent)}.ms-val.green{color:var(--good)}.ms-val.red{color:var(--bad)}.ms-val.yellow{color:#f0c040}
+.ms-lbl{font-size:8px;color:var(--muted);letter-spacing:.3px;margin-top:0px}
+.fps-bar{display:flex;align-items:center;gap:5px;margin-bottom:4px}
+.fps-chip{font-family:var(--mono);font-size:8px;color:var(--muted);background:var(--surface);border:1px solid var(--border);padding:1px 6px;border-radius:3px;letter-spacing:.3px}
+.live-result{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.result-badge{padding:2px 10px;border-radius:5px;font-family:var(--display);font-size:22px;letter-spacing:2px;line-height:1.1;transition:all .15s;min-width:80px;text-align:center}
+.result-badge.good{background:rgba(0,255,136,.12);color:var(--good);border:1px solid rgba(0,255,136,.3)}
+.result-badge.bad{background:rgba(255,51,85,.12);color:var(--bad);border:1px solid rgba(255,51,85,.3)}
+.result-badge.idle{background:rgba(255,255,255,.04);color:var(--muted);border:1px solid var(--border)}
+.result-badge.scanning{background:rgba(0,170,255,.08);color:var(--accent);border:1px solid rgba(0,170,255,.3);font-size:11px;letter-spacing:.3px;animation:blink 1.2s infinite}
+.conf-block{flex:1}
+.conf-label{display:flex;justify-content:space-between;font-family:var(--mono);font-size:9px;color:var(--muted);margin-bottom:3px}
+.conf-track{height:4px;background:var(--border);border-radius:2px;overflow:hidden}
+.conf-fill{height:100%;border-radius:2px;transition:width .15s,background .2s}
+.conf-fill.good{background:var(--good)}.conf-fill.bad{background:var(--bad)}
+.scores-row{display:flex;gap:4px;margin-bottom:5px}
+.score-chip{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:4px 8px;display:flex;align-items:center;justify-content:space-between;transition:border-color .2s}
+.score-chip.active-good{border-color:rgba(0,255,136,.4);background:rgba(0,255,136,.05)}
+.score-chip.active-bad{border-color:rgba(255,51,85,.4);background:rgba(255,51,85,.05)}
+.sc-name{font-size:9px;color:var(--muted)}
+.sc-pct{font-family:var(--mono);font-size:13px;font-weight:600}
+.sc-pct.good{color:var(--good)}.sc-pct.bad{color:var(--bad)}
+.btn-row{display:flex;gap:5px}
+.btn{flex:1;padding:9px 4px;border:none;border-radius:8px;font-family:var(--sans);font-size:12px;font-weight:700;cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:center;gap:3px}
+.btn:active{transform:scale(.97)}.btn:disabled{opacity:.35;cursor:not-allowed}
+.btn-start{background:var(--accent);color:#000}
+.btn-stop{background:var(--bad);color:#fff}
+.btn-roi{background:#2a3040;color:var(--accent);border:1px solid rgba(0,170,255,.3)}
+.btn-roi.active{background:rgba(0,170,255,.15);border-color:var(--accent)}
+.btn-report{background:var(--surface);color:var(--text);border:1px solid var(--border)}
+.btn-reset{background:var(--surface);color:var(--muted);border:1px solid var(--border)}
+
+/* 웹캠 선택 모달 */
+.cam-select-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:300;align-items:center;justify-content:center;padding:20px}
+.cam-select-bg.show{display:flex}
+.cam-select-box{background:var(--surface);border:1px solid var(--border);border-radius:14px;width:100%;max-width:480px;padding:20px}
+.cs-title{font-family:var(--display);font-size:20px;letter-spacing:2px;color:var(--accent);margin-bottom:4px}
+.cs-sub{font-size:11px;color:var(--muted);font-family:var(--mono);margin-bottom:16px;letter-spacing:.5px}
+.cs-search{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px;outline:none;margin-bottom:10px;transition:border-color .2s}
+.cs-search:focus{border-color:var(--accent)}
+.cs-list{max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+.cs-item{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:11px 14px;cursor:pointer;transition:all .15s;display:flex;align-items:center;gap:10px}
+.cs-item:hover{border-color:var(--accent);background:rgba(0,170,255,.06)}
+.cs-item.selected{border-color:var(--accent);background:rgba(0,170,255,.1)}
+.cs-item .ci-icon{font-size:18px;flex-shrink:0}
+.cs-item .ci-name{font-size:12px;font-weight:600;color:var(--text)}
+.cs-item .ci-id{font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:2px}
+.cs-item .ci-check{margin-left:auto;color:var(--accent);font-size:16px;display:none}
+.cs-item.selected .ci-check{display:block}
+.cs-empty{text-align:center;padding:24px;color:var(--muted);font-size:12px;font-family:var(--mono)}
+.cs-btn-row{display:flex;gap:8px}
+.cs-btn{flex:1;padding:11px;border:none;border-radius:8px;font-family:var(--sans);font-size:13px;font-weight:700;cursor:pointer}
+.cs-btn.primary{background:var(--accent);color:#000}
+.cs-btn.primary:disabled{opacity:.35;cursor:not-allowed}
+.cs-btn.secondary{background:var(--surface);color:var(--muted);border:1px solid var(--border)}
+.cs-refresh{background:none;border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--muted);font-size:11px;cursor:pointer;font-family:var(--mono);margin-bottom:10px}
+.cs-refresh:hover{color:var(--text);border-color:var(--accent)}
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:200;align-items:flex-end;justify-content:center}
+.modal-bg.show{display:flex}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:16px 16px 0 0;width:100%;max-width:560px;max-height:85vh;overflow-y:auto;padding:20px}
+.modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.modal-title{font-family:var(--display);font-size:22px;letter-spacing:2px;color:var(--accent)}
+.modal-close{background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;padding:4px}
+.report-section{margin-bottom:16px}
+.report-section h3{font-family:var(--mono);font-size:10px;letter-spacing:2px;color:var(--muted);margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.report-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.report-item{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px}
+.ri-label{font-size:11px;color:var(--muted);margin-bottom:4px}
+.ri-val{font-family:var(--mono);font-size:16px;font-weight:600}
+.ri-val.green{color:var(--good)}.ri-val.red{color:var(--bad)}.ri-val.blue{color:var(--accent)}.ri-val.yellow{color:#f0c040}
+.report-full{grid-column:span 2}
+.defect-list{background:var(--bg);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.dl-item{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);font-size:12px}
+.dl-item:last-child{border-bottom:none}
+.dl-num{font-family:var(--mono);font-size:10px;color:var(--muted);min-width:30px}
+.dl-time{font-family:var(--mono);font-size:11px;color:var(--bad);flex:1}
+.dl-conf{font-family:var(--mono);font-size:10px;color:var(--muted)}
+.empty-dl{padding:16px;text-align:center;color:var(--muted);font-size:12px;font-family:var(--mono)}
+.download-btn{width:100%;padding:12px;border:none;border-radius:10px;background:var(--accent);color:#000;font-family:var(--sans);font-size:14px;font-weight:700;cursor:pointer;margin-top:12px;display:flex;align-items:center;justify-content:center;gap:6px}
+.dl-csv-btn{width:100%;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font-family:var(--sans);font-size:14px;font-weight:700;cursor:pointer;margin-top:8px;display:flex;align-items:center;justify-content:center;gap:6px}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="logo">QC<em>.</em>WEBCAM</div>
+    <div class="hd-sub">WEBCAM · ROI DETECTION</div>
+  </div>
+  <div class="hd-right">
+    <div class="led loading" id="led"></div>
+    <div class="hd-status" id="hdStatus">모델 로딩</div>
+  </div>
+</header>
+
+<div class="cam-wrap" id="camWrap">
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="overlay"></canvas>
+  <div class="defect-flash" id="defectFlash"></div>
+  <div class="roi-hint" id="roiHint">✋ ROI 박스를 드래그하여 위치·크기 조정</div>
+  <div class="cam-ph" id="camPh">
+    <div class="big">📷</div>
+    <p>START 버튼을 눌러<br>카메라를 시작하세요</p>
+  </div>
+  <div class="init-overlay" id="initOverlay">
+    <div class="spinner"></div>
+    <div class="init-msg" id="initMsg">MODEL LOADING...</div>
+  </div>
+</div>
+
+<div class="hud">
+  <div class="time-row">
+    <div class="time-chip"><div class="tc-label">START TIME</div><div class="tc-val" id="tcStart">--:--:--</div></div>
+    <div class="time-chip"><div class="tc-label">END TIME</div><div class="tc-val" id="tcEnd">--:--:--</div></div>
+    <div class="time-chip"><div class="tc-label">ELAPSED</div><div class="tc-val" id="tcElapsed">00:00:00</div></div>
+  </div>
+  <div class="mini-stats">
+    <div class="mini-stat"><div class="ms-val blue"   id="sTotal">0</div><div class="ms-lbl">검사</div></div>
+    <div class="mini-stat"><div class="ms-val green"  id="sGood">0</div><div class="ms-lbl">양품</div></div>
+    <div class="mini-stat"><div class="ms-val red"    id="sBad">0</div><div class="ms-lbl">불량</div></div>
+    <div class="mini-stat"><div class="ms-val yellow" id="sRate">-</div><div class="ms-lbl">양품율</div></div>
+  </div>
+  <div class="fps-bar">
+    <div class="fps-chip" id="fpsChip">FPS: --</div>
+    <div class="fps-chip" id="modeChip">STOPPED</div>
+    <div class="fps-chip" id="alertChip" style="color:var(--bad);display:none">🔔 홈누락</div>
+  </div>
+  <div class="live-result">
+    <div class="result-badge idle" id="resultBadge">대기</div>
+    <div class="conf-block">
+      <div class="conf-label"><span>CONFIDENCE</span><span id="confNum">--</span></div>
+      <div class="conf-track"><div class="conf-fill" id="confFill" style="width:0%"></div></div>
+    </div>
+  </div>
+  <div class="scores-row">
+    <div class="score-chip" id="chip0"><span class="sc-name">홈가공 양품</span><span class="sc-pct good" id="pct0">--%</span></div>
+    <div class="score-chip" id="chip1"><span class="sc-name">홈가공 누락</span><span class="sc-pct bad"  id="pct1">--%</span></div>
+  </div>
+  <div class="btn-row">
+    <button class="btn btn-start"  id="btnStart"  onclick="openCamSelect()" disabled>📷 웹캠 선택</button>
+    <button class="btn btn-stop"   id="btnStop"   onclick="stopCamera()"  disabled>■ STOP</button>
+    <button class="btn btn-roi"    id="btnRoi"    onclick="toggleRoiEdit()">⊞ ROI</button>
+    <button class="btn btn-report" id="btnReport" onclick="showReport()"  disabled>📋 보고서</button>
+    <button class="btn btn-reset"                 onclick="resetAll()">↺ 초기화</button>
+  </div>
+</div>
+
+<!-- 웹캠 선택 모달 -->
+<div class="cam-select-bg" id="camSelectBg">
+  <div class="cam-select-box">
+    <div class="cs-title">📷 웹캠 선택</div>
+    <div class="cs-sub">연결된 카메라 장치를 선택하세요</div>
+    <input class="cs-search" type="text" id="csSearch" placeholder="카메라 이름으로 검색..." oninput="filterCamList()">
+    <button class="cs-refresh" onclick="loadCamList()">↻ 장치 목록 새로고침</button>
+    <div class="cs-list" id="csList">
+      <div class="cs-empty">카메라를 검색 중...</div>
+    </div>
+    <div class="cs-btn-row">
+      <button class="cs-btn secondary" onclick="closeCamSelect()">취소</button>
+      <button class="cs-btn primary" id="csBtnOk" onclick="confirmCamSelect()" disabled>이 카메라로 시작</button>
+    </div>
+  </div>
+</div>
+
+<!-- 보고서 모달 -->
+<div class="modal-bg" id="modalBg" onclick="closeModal(event)">
+  <div class="modal" id="modal">
+    <div class="modal-head">
+      <div class="modal-title">INSPECTION REPORT</div>
+      <button class="modal-close" onclick="closeModalDirect()">✕</button>
+    </div>
+    <div class="report-section">
+      <h3>검사 시간</h3>
+      <div class="report-grid">
+        <div class="report-item"><div class="ri-label">시작 시간</div><div class="ri-val blue" id="rStart">--</div></div>
+        <div class="report-item"><div class="ri-label">종료 시간</div><div class="ri-val blue" id="rEnd">--</div></div>
+        <div class="report-item report-full"><div class="ri-label">소요 시간</div><div class="ri-val blue" id="rElapsed">--</div></div>
+      </div>
+    </div>
+    <div class="report-section">
+      <h3>검사 결과</h3>
+      <div class="report-grid">
+        <div class="report-item"><div class="ri-label">총 검사 수량</div><div class="ri-val blue"   id="rTotal">0</div></div>
+        <div class="report-item"><div class="ri-label">양품율</div><div class="ri-val yellow" id="rRate">-</div></div>
+        <div class="report-item"><div class="ri-label">양품 수량</div><div class="ri-val green" id="rGood">0</div></div>
+        <div class="report-item"><div class="ri-label">불량 수량</div><div class="ri-val red"   id="rBad">0</div></div>
+      </div>
+    </div>
+    <div class="report-section">
+      <h3>불량 발생 이력</h3>
+      <div class="defect-list" id="defectList"><div class="empty-dl">// 불량 없음</div></div>
+    </div>
+    <button class="download-btn" onclick="downloadPDF()">⬇ PDF 보고서 다운로드</button>
+    <button class="dl-csv-btn"   onclick="downloadCSV()">⬇ CSV 다운로드</button>
+  </div>
+</div>
+
+<script>
+const MODEL_URL = 'https://teachablemachine.withgoogle.com/models/ZDlR2EgcM/';
+const CONFIDENCE_THRESHOLD = 0.70;  // 인식 임계값
+const CONFIRM_FRAMES       = 8;     // 연속 확정 프레임 수
+const ALERT_COOLDOWN       = 3000;  // 불량 알림 쿨다운(ms)
+const ALPHA                = 0.3;   // 스무딩 계수
+
+let model   = null;
+let stream  = null;
+let running = false;
+let rafId   = null;
+
+// 통계
+let stats   = {total:0, good:0, bad:0};
+let defects = [];
+let startTime = null, endTime = null, elapsedTimer = null;
+
+// FPS
+let lastTime=0, frameCount=0, fps=0;
+
+// 스무딩
+let smoothGood=0, smoothBad=0;
+let lastLabel=null, sameCount=0;
+let lastAlertTime=0;
+
+// AudioContext
+let audioCtx = null;
+
+// ── ROI 상태 ────────────────────────────────────────────────────
+// roi 좌표는 캔버스 크기 대비 비율(0~1)로 저장
+let roi = { cx:0.5, cy:0.45, w:0.35, h:0.40 };  // 중심x, 중심y, 너비, 높이(비율)
+let roiEditMode  = false;  // ROI 편집 모드
+let roiDrag      = null;   // 드래그 상태: {type:'move'|'resize', sx,sy, ox,oy,ow,oh}
+
+// ── 모델 초기화 ────────────────────────────────────────────────
+async function init() {
+  try {
+    model = await tmImage.load(MODEL_URL+'model.json', MODEL_URL+'metadata.json');
+    document.getElementById('initOverlay').classList.add('hide');
+    setLed('on','준비 완료');
+    document.getElementById('btnStart').disabled = false;
+  } catch(e) {
+    document.getElementById('initMsg').textContent = '모델 로드 실패';
+    setLed('err','오류');
+  }
+}
+
+// ── Audio ───────────────────────────────────────────────────────
+function ensureAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  if (audioCtx.state==='suspended') audioCtx.resume();
+}
+function playBeep() {
+  try {
+    ensureAudio();
+    const osc=audioCtx.createOscillator(), gain=audioCtx.createGain();
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.type='square';
+    osc.frequency.setValueAtTime(880,audioCtx.currentTime);
+    osc.frequency.setValueAtTime(550,audioCtx.currentTime+0.12);
+    gain.gain.setValueAtTime(0.4,audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.4);
+    osc.start(audioCtx.currentTime); osc.stop(audioCtx.currentTime+0.4);
+  } catch(e){}
+}
+function speakDefect() {
+  if (!('speechSynthesis' in window)) return;
+  window.speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance('홈누락 주의');
+  u.lang='ko-KR'; u.rate=0.9; u.pitch=1.0; u.volume=1.0;
+  window.speechSynthesis.speak(u);
+}
+function vibrate() { if(navigator.vibrate) navigator.vibrate([200,80,200]); }
+
+function triggerDefectAlert(conf) {
+  const now=Date.now();
+  if (now-lastAlertTime < ALERT_COOLDOWN) return;
+  lastAlertTime=now;
+  const fl=document.getElementById('defectFlash');
+  fl.classList.add('go'); setTimeout(()=>fl.classList.remove('go'),300);
+  const chip=document.getElementById('alertChip');
+  chip.style.display='block'; setTimeout(()=>{chip.style.display='none';},2000);
+  playBeep(); speakDefect(); vibrate();
+  const t=fmt(new Date());
+  defects.push({time:t, conf:Math.round(conf*100)});
+}
+
+// ── 웹캠 선택 ───────────────────────────────────────────────────
+let allDevices      = [];
+let selectedDeviceId = null;
+
+async function openCamSelect() {
+  document.getElementById('camSelectBg').classList.add('show');
+  await loadCamList();
+}
+
+function closeCamSelect() {
+  document.getElementById('camSelectBg').classList.remove('show');
+}
+
+async function loadCamList() {
+  const list = document.getElementById('csList');
+  list.innerHTML = '<div class="cs-empty">카메라 목록 불러오는 중...</div>';
+  document.getElementById('csBtnOk').disabled = true;
+  selectedDeviceId = null;
+
+  // 권한 먼저 획득 (label이 보이려면 필요)
+  try {
+    const tmp = await navigator.mediaDevices.getUserMedia({video:true});
+    tmp.getTracks().forEach(t => t.stop());
+  } catch(e) {}
+
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    allDevices = devices.filter(d => d.kind === 'videoinput');
+    renderCamList(allDevices);
+  } catch(e) {
+    list.innerHTML = '<div class="cs-empty">카메라 장치를 불러오지 못했습니다.<br>' + e.message + '</div>';
+  }
+}
+
+function renderCamList(devices) {
+  const list = document.getElementById('csList');
+  if (devices.length === 0) {
+    list.innerHTML = '<div class="cs-empty">연결된 카메라가 없습니다.<br>웹캠을 연결 후 새로고침 하세요.</div>';
+    return;
+  }
+  list.innerHTML = devices.map((d, i) => {
+    const label = d.label || '카메라 ' + (i + 1);
+    const shortId = d.deviceId.length > 20 ? d.deviceId.slice(0,20) + '...' : d.deviceId;
+    const sel = d.deviceId === selectedDeviceId ? 'selected' : '';
+    return `<div class="cs-item ${sel}" onclick="selectCam('${d.deviceId}', this)">
+      <div class="ci-icon">📷</div>
+      <div style="flex:1;min-width:0">
+        <div class="ci-name">${label}</div>
+        <div class="ci-id">ID: ${shortId}</div>
+      </div>
+      <div class="ci-check">✓</div>
+    </div>`;
+  }).join('');
+}
+
+function filterCamList() {
+  const kw = document.getElementById('csSearch').value.toLowerCase();
+  renderCamList(allDevices.filter(d =>
+    (d.label||'').toLowerCase().includes(kw) || d.deviceId.toLowerCase().includes(kw)
+  ));
+}
+
+function selectCam(deviceId, el) {
+  selectedDeviceId = deviceId;
+  document.querySelectorAll('.cs-item').forEach(e => e.classList.remove('selected'));
+  el.classList.add('selected');
+  document.getElementById('csBtnOk').disabled = false;
+}
+
+async function confirmCamSelect() {
+  if (!selectedDeviceId) return;
+  closeCamSelect();
+  await startCamera(selectedDeviceId);
+}
+
+// ── 카메라 ─────────────────────────────────────────────────────
+async function startCamera(deviceId) {
+  ensureAudio();
+  try {
+    // deviceId가 있으면 해당 장치, 없으면 기본 카메라
+    const videoConstraints = deviceId
+      ? { deviceId: { exact: deviceId }, width:{ideal:1280}, height:{ideal:720} }
+      : { facingMode:'environment', width:{ideal:1280}, height:{ideal:720} };
+
+    stream=await navigator.mediaDevices.getUserMedia({ video: videoConstraints });
+    const v=document.getElementById('video');
+    v.srcObject=stream; await v.play();
+
+    // 사용 중인 카메라 이름 헤더에 표시
+    const track = stream.getVideoTracks()[0];
+    if (track) {
+      document.getElementById('modeChip').textContent = '● ' + (track.label || 'LIVE');
+    }
+
+    // 캔버스 크기 초기화
+    const wrap=document.getElementById('camWrap');
+    const canvas=document.getElementById('overlay');
+    canvas.width=wrap.clientWidth; canvas.height=wrap.clientHeight;
+
+    document.getElementById('camPh').style.display='none';
+    document.getElementById('btnStart').disabled=true;
+    document.getElementById('btnStop').disabled=false;
+    document.getElementById('btnReport').disabled=false;
+    document.getElementById('modeChip').style.color='var(--good)';
+
+    startTime=new Date(); endTime=null;
+    document.getElementById('tcStart').textContent=fmtTime(startTime);
+    document.getElementById('tcEnd').textContent='--:--:--';
+    startElapsedTimer();
+
+    running=true;
+    requestAnimationFrame(detectLoop);
+  } catch(e){ alert('카메라 시작 실패: '+e.message); }
+}
+
+function stopCamera() {
+  running=false;
+  if (rafId) cancelAnimationFrame(rafId);
+  if (stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+  if (elapsedTimer){ clearInterval(elapsedTimer); elapsedTimer=null; }
+  endTime=new Date();
+  document.getElementById('tcEnd').textContent=fmtTime(endTime);
+  document.getElementById('video').srcObject=null;
+  const canvas=document.getElementById('overlay');
+  canvas.getContext('2d').clearRect(0,0,canvas.width,canvas.height);
+  document.getElementById('camPh').style.display='flex';
+  document.getElementById('btnStart').disabled=false;
+  document.getElementById('btnStop').disabled=true;
+  document.getElementById('modeChip').textContent='■ STOPPED';
+  document.getElementById('modeChip').style.color='var(--muted)';
+}
+
+function startElapsedTimer() {
+  if (elapsedTimer) clearInterval(elapsedTimer);
+  elapsedTimer=setInterval(()=>{
+    if (!startTime) return;
+    const s=Math.floor((Date.now()-startTime.getTime())/1000);
+    const h=Math.floor(s/3600).toString().padStart(2,'0');
+    const m=Math.floor((s%3600)/60).toString().padStart(2,'0');
+    const ss=(s%60).toString().padStart(2,'0');
+    document.getElementById('tcElapsed').textContent=h+':'+m+':'+ss;
+  },1000);
+}
+
+// ── ROI 편집 모드 ───────────────────────────────────────────────
+function toggleRoiEdit() {
+  roiEditMode = !roiEditMode;
+  const btn=document.getElementById('btnRoi');
+  const hint=document.getElementById('roiHint');
+  btn.classList.toggle('active', roiEditMode);
+  hint.classList.toggle('show', roiEditMode);
+}
+
+// ROI 픽셀 좌표 계산
+function getRoiPx(canvas) {
+  const W=canvas.width, H=canvas.height;
+  const x=Math.round((roi.cx - roi.w/2)*W);
+  const y=Math.round((roi.cy - roi.h/2)*H);
+  const w=Math.round(roi.w*W);
+  const h=Math.round(roi.h*H);
+  return {x,y,w,h};
+}
+
+// 터치/마우스 좌표 정규화
+function getPointerPos(e, canvas) {
+  const rect=canvas.getBoundingClientRect();
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  return {
+    nx: (clientX-rect.left)/rect.width,
+    ny: (clientY-rect.top)/rect.height
+  };
+}
+
+// 핸들 영역 판단 (모서리 드래그 = resize)
+function getHandleType(nx, ny) {
+  const r=roi;
+  const mx=r.cx-r.w/2, my=r.cy-r.h/2, rx=r.cx+r.w/2, ry=r.cy+r.h/2;
+  const th=0.05; // 핸들 감지 여유
+  // 모서리 핸들
+  if (Math.abs(nx-rx)<th && Math.abs(ny-ry)<th) return 'resize-br';
+  if (Math.abs(nx-mx)<th && Math.abs(ny-ry)<th) return 'resize-bl';
+  if (Math.abs(nx-rx)<th && Math.abs(ny-my)<th) return 'resize-tr';
+  if (Math.abs(nx-mx)<th && Math.abs(ny-my)<th) return 'resize-tl';
+  // 내부 = 이동
+  if (nx>mx && nx<rx && ny>my && ny<ry) return 'move';
+  return null;
+}
+
+// 이벤트 등록
+function setupRoiEvents(canvas) {
+  function onStart(e) {
+    if (!roiEditMode) return;
+    e.preventDefault();
+    const {nx,ny}=getPointerPos(e,canvas);
+    const type=getHandleType(nx,ny);
+    if (!type) return;
+    roiDrag={type,sx:nx,sy:ny,ox:roi.cx,oy:roi.cy,ow:roi.w,oh:roi.h};
+  }
+  function onMove(e) {
+    if (!roiDrag) return;
+    e.preventDefault();
+    const {nx,ny}=getPointerPos(e,canvas);
+    const dx=nx-roiDrag.sx, dy=ny-roiDrag.sy;
+    if (roiDrag.type==='move') {
+      roi.cx=Math.max(roi.w/2, Math.min(1-roi.w/2, roiDrag.ox+dx));
+      roi.cy=Math.max(roi.h/2, Math.min(1-roi.h/2, roiDrag.oy+dy));
+    } else {
+      // resize: 드래그 방향에 따라 크기 조정
+      const newW=Math.max(0.1, Math.min(0.9, roiDrag.ow+Math.abs(dx)*2));
+      const newH=Math.max(0.1, Math.min(0.9, roiDrag.oh+Math.abs(dy)*2));
+      roi.w=newW; roi.h=newH;
+    }
+  }
+  function onEnd() { roiDrag=null; }
+
+  canvas.addEventListener('mousedown',  onStart);
+  canvas.addEventListener('mousemove',  onMove);
+  canvas.addEventListener('mouseup',    onEnd);
+  canvas.addEventListener('touchstart', onStart, {passive:false});
+  canvas.addEventListener('touchmove',  onMove,  {passive:false});
+  canvas.addEventListener('touchend',   onEnd);
+}
+
+// ── 감지 루프 ────────────────────────────────────────────────────
+async function detectLoop(timestamp) {
+  if (!running) return;
+
+  frameCount++;
+  if (timestamp-lastTime>=1000) {
+    fps=frameCount; frameCount=0; lastTime=timestamp;
+    document.getElementById('fpsChip').textContent='FPS: '+fps;
+  }
+
+  const video=document.getElementById('video');
+  const canvas=document.getElementById('overlay');
+  const wrap=document.getElementById('camWrap');
+
+  if (canvas.width!==wrap.clientWidth || canvas.height!==wrap.clientHeight) {
+    canvas.width=wrap.clientWidth; canvas.height=wrap.clientHeight;
+  }
+
+  if (video.readyState>=2 && model) {
+    const predictions=await model.predict(video);
+
+    let goodProb=0, badProb=0;
+    predictions.forEach(p=>{
+      const lo=p.className.toLowerCase();
+      if (lo.includes('class 1')||lo.includes('양품')) goodProb=p.probability;
+      else badProb=p.probability;
+    });
+
+    smoothGood=ALPHA*goodProb+(1-ALPHA)*smoothGood;
+    smoothBad =ALPHA*badProb +(1-ALPHA)*smoothBad;
+
+    const isGood  = smoothGood>=smoothBad;
+    const topConf = isGood ? smoothGood : smoothBad;
+    const label   = isGood ? 'good' : 'bad';
+
+    if (topConf < CONFIDENCE_THRESHOLD) {
+      // 인식 불가 → 점선 ROI 박스
+      showScanning(smoothGood, smoothBad);
+      drawRoiBox(canvas, 'scanning', topConf);
+      lastLabel=null; sameCount=0;
+    } else {
+      if (label===lastLabel) sameCount++;
+      else { lastLabel=label; sameCount=1; }
+
+      updateResultUI(isGood, topConf, goodProb, badProb);
+      drawRoiBox(canvas, isGood?'good':'bad', topConf);
+
+      if (sameCount===CONFIRM_FRAMES) {
+        if (isGood) { stats.good++; stats.total++; updateStats(); }
+        else        { triggerDefectAlert(topConf); stats.bad++; stats.total++; updateStats(); }
+      }
+    }
+  }
+  rafId=requestAnimationFrame(detectLoop);
+}
+
+// ── ROI 박스 그리기 ─────────────────────────────────────────────
+function drawRoiBox(canvas, state, conf) {
+  const ctx=canvas.getContext('2d');
+  const W=canvas.width||300, H=canvas.height||400;
+  ctx.clearRect(0,0,W,H);
+
+  const {x,y,w,h}=getRoiPx(canvas);
+  const alpha = state==='scanning' ? 0.6 : (0.4+conf*0.6);
+
+  // ── 색상 정의 ──
+  let strokeColor, fillColor, labelBg, labelText;
+  if (state==='good') {
+    strokeColor=`rgba(0,255,136,${alpha})`;
+    fillColor  =`rgba(0,255,136,${alpha*0.08})`;
+    labelBg    =`rgba(0,255,136,${alpha*0.92})`;
+    labelText  ='홈가공 정상';
+  } else if (state==='bad') {
+    strokeColor=`rgba(255,51,85,${alpha})`;
+    fillColor  =`rgba(255,51,85,${alpha*0.08})`;
+    labelBg    =`rgba(255,51,85,${alpha*0.92})`;
+    labelText  ='홈가공 누락';
+  } else {
+    strokeColor='rgba(0,170,255,0.5)';
+    fillColor  ='rgba(0,170,255,0.04)';
+    labelBg    ='rgba(0,170,255,0.6)';
+    labelText  ='제품 인식중...';
+  }
+
+  // ── 배경 채우기 ──
+  ctx.fillStyle=fillColor;
+  ctx.fillRect(x,y,w,h);
+
+  // ── 외곽선 ──
+  ctx.strokeStyle=strokeColor;
+  ctx.lineWidth=2.5;
+  if (state==='scanning') {
+    ctx.setLineDash([10,7]); ctx.strokeRect(x,y,w,h); ctx.setLineDash([]);
+  } else {
+    ctx.strokeRect(x,y,w,h);
+  }
+
+  // ── 코너 L자 ──
+  const cL=Math.min(w,h)*0.12, cW=state==='scanning'?2.5:4;
+  ctx.lineWidth=cW; ctx.strokeStyle=strokeColor; ctx.setLineDash([]);
+  [[x,y,1,1],[x+w,y,-1,1],[x,y+h,1,-1],[x+w,y+h,-1,-1]].forEach(([cx,cy,dx,dy])=>{
+    ctx.beginPath(); ctx.moveTo(cx+dx*cL,cy); ctx.lineTo(cx,cy); ctx.lineTo(cx,cy+dy*cL); ctx.stroke();
+  });
+
+  // ── 라벨 박스 (ROI 상단) ──
+  const lh=28, lw=state==='scanning'?130:150;
+  ctx.fillStyle=labelBg;
+  if (ctx.roundRect) ctx.roundRect(x,y-lh,lw,lh,3);
+  else ctx.rect(x,y-lh,lw,lh);
+  ctx.fill();
+
+  ctx.fillStyle='#000';
+  ctx.font=`700 12px 'Noto Sans KR',sans-serif`;
+  ctx.fillText(labelText, x+8, y-9);
+  if (state!=='scanning') {
+    ctx.font=`600 10px 'JetBrains Mono',monospace`;
+    ctx.fillText(Math.round(conf*100)+'%', x+lw-32, y-10);
+  }
+
+  // ── 중앙 판정 아이콘 (신뢰도 높을 때) ──
+  if (state!=='scanning' && conf>0.75) {
+    ctx.textAlign='center';
+    const iconSize=Math.min(w,h)*0.28;
+    ctx.font=`${iconSize}px Arial`;
+    const iconAlpha=(conf-0.75)*3;
+    ctx.fillStyle=state==='good'?`rgba(0,255,136,${iconAlpha})`:`rgba(255,51,85,${iconAlpha})`;
+    ctx.fillText(state==='good'?'✓':'✕', x+w/2, y+h/2+iconSize*0.35);
+    ctx.textAlign='left';
+  }
+
+  // ── 스캔라인 ──
+  const sy=y+((Date.now()%1600)/1600)*h;
+  const gr=ctx.createLinearGradient(x,sy-20,x,sy+20);
+  gr.addColorStop(0,'transparent');
+  gr.addColorStop(0.5,state==='good'?`rgba(0,255,136,${alpha*0.4})`
+                    :state==='bad' ?`rgba(255,51,85,${alpha*0.4})`
+                                   :`rgba(0,170,255,0.2)`);
+  gr.addColorStop(1,'transparent');
+  ctx.fillStyle=gr; ctx.fillRect(x,sy-20,w,40);
+
+  // ── ROI 편집 모드: 핸들 표시 ──
+  if (roiEditMode) {
+    const hSize=14;
+    [[x,y],[x+w,y],[x,y+h],[x+w,y+h]].forEach(([hx,hy])=>{
+      ctx.fillStyle='rgba(255,255,255,0.9)';
+      ctx.strokeStyle='rgba(0,0,0,0.5)';
+      ctx.lineWidth=1.5;
+      ctx.beginPath();
+      ctx.arc(hx,hy,hSize/2,0,Math.PI*2);
+      ctx.fill(); ctx.stroke();
+    });
+    // 중앙 이동 핸들
+    ctx.fillStyle='rgba(255,255,255,0.5)';
+    ctx.strokeStyle='rgba(255,255,255,0.8)';
+    ctx.lineWidth=1.5;
+    ctx.setLineDash([4,4]);
+    ctx.strokeRect(x+10,y+10,w-20,h-20);
+    ctx.setLineDash([]);
+  }
+}
+
+// ── UI ─────────────────────────────────────────────────────────
+function showScanning(gp, bp) {
+  const badge=document.getElementById('resultBadge');
+  badge.className='result-badge scanning'; badge.textContent='제품 인식중...';
+  const cf=document.getElementById('confFill');
+  cf.className='conf-fill'; cf.style.width='0%'; cf.style.background='var(--accent)';
+  document.getElementById('confNum').textContent='--';
+  document.getElementById('pct0').textContent=Math.round(gp*100)+'%';
+  document.getElementById('pct1').textContent=Math.round(bp*100)+'%';
+  document.getElementById('chip0').className='score-chip';
+  document.getElementById('chip1').className='score-chip';
+}
+
+function updateResultUI(isGood, conf, gp, bp) {
+  const pct=Math.round(conf*100);
+  const badge=document.getElementById('resultBadge');
+  badge.className='result-badge '+(isGood?'good':'bad');
+  badge.textContent=isGood?'양  품':'불  량';
+  const cf=document.getElementById('confFill');
+  cf.className='conf-fill '+(isGood?'good':'bad'); cf.style.width=pct+'%';
+  document.getElementById('confNum').textContent=pct+'%';
+  document.getElementById('pct0').textContent=Math.round(gp*100)+'%';
+  document.getElementById('pct1').textContent=Math.round(bp*100)+'%';
+  document.getElementById('chip0').className='score-chip '+(isGood?'active-good':'');
+  document.getElementById('chip1').className='score-chip '+(!isGood?'active-bad':'');
+}
+
+function resetResultUI() {
+  document.getElementById('resultBadge').className='result-badge idle';
+  document.getElementById('resultBadge').textContent='대기';
+  document.getElementById('confFill').style.width='0%';
+  document.getElementById('confNum').textContent='--';
+  document.getElementById('pct0').textContent='--%';
+  document.getElementById('pct1').textContent='--%';
+  document.getElementById('chip0').className='score-chip';
+  document.getElementById('chip1').className='score-chip';
+  smoothGood=0; smoothBad=0; lastLabel=null; sameCount=0;
+}
+
+function updateStats() {
+  document.getElementById('sTotal').textContent=stats.total;
+  document.getElementById('sGood').textContent=stats.good;
+  document.getElementById('sBad').textContent=stats.bad;
+  const rate=stats.total>0?Math.round(stats.good/stats.total*100):'-';
+  document.getElementById('sRate').textContent=rate==='-'?'-':rate+'%';
+}
+
+function resetAll() {
+  if (running) stopCamera();
+  stats={total:0,good:0,bad:0}; defects=[];
+  startTime=null; endTime=null;
+  document.getElementById('tcStart').textContent='--:--:--';
+  document.getElementById('tcEnd').textContent='--:--:--';
+  document.getElementById('tcElapsed').textContent='00:00:00';
+  document.getElementById('btnReport').disabled=true;
+  document.getElementById('btnStart').textContent='📷 웹캠 선택';
+  updateStats();
+}
+
+// ── 보고서 ─────────────────────────────────────────────────────
+function showReport() {
+  const st=startTime?fmt(startTime):'--';
+  const et=endTime?fmt(endTime):(running?fmt(new Date()):'--');
+  const el=startTime?calcElapsed():'--';
+  const rate=stats.total>0?Math.round(stats.good/stats.total*100)+'%':'-';
+  document.getElementById('rStart').textContent=st;
+  document.getElementById('rEnd').textContent=et;
+  document.getElementById('rElapsed').textContent=el;
+  document.getElementById('rTotal').textContent=stats.total;
+  document.getElementById('rGood').textContent=stats.good;
+  document.getElementById('rBad').textContent=stats.bad;
+  document.getElementById('rRate').textContent=rate;
+  const dl=document.getElementById('defectList');
+  dl.innerHTML=defects.length===0?'<div class="empty-dl">// 불량 없음</div>'
+    :defects.map((d,i)=>`<div class="dl-item"><span class="dl-num">#${i+1}</span><span class="dl-time">❌ ${d.time}</span><span class="dl-conf">신뢰도 ${d.conf}%</span></div>`).join('');
+  document.getElementById('modalBg').classList.add('show');
+}
+
+function calcElapsed() {
+  if (!startTime) return '--';
+  const ref=endTime||new Date();
+  const s=Math.floor((ref-startTime)/1000);
+  return Math.floor(s/3600).toString().padStart(2,'0')+':'+Math.floor((s%3600)/60).toString().padStart(2,'0')+':'+(s%60).toString().padStart(2,'0');
+}
+function closeModal(e){ if(e.target===document.getElementById('modalBg')) closeModalDirect(); }
+function closeModalDirect(){ document.getElementById('modalBg').classList.remove('show'); }
+
+function downloadPDF() {
+  const st=startTime?fmt(startTime):'--';
+  const et=endTime?fmt(endTime):(running?fmt(new Date()):'--');
+  const rate=stats.total>0?Math.round(stats.good/stats.total*100)+'%':'-';
+  const defectRows=defects.length===0?'<tr><td colspan="3" style="text-align:center;color:#999">불량 없음</td></tr>'
+    :defects.map((d,i)=>`<tr><td>${i+1}</td><td>${d.time}</td><td>${d.conf}%</td></tr>`).join('');
+  const html=`<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><title>QC 검사 보고서</title>
+<style>body{font-family:'Noto Sans KR',sans-serif;max-width:700px;margin:40px auto;padding:0 20px;color:#1a1a2e}
+h1{font-size:24px;font-weight:900;color:#1a56ff;letter-spacing:2px;margin-bottom:4px}
+.sub{font-size:12px;color:#888;margin-bottom:28px;font-family:monospace}
+.section{margin-bottom:24px}.section h2{font-size:13px;font-weight:700;letter-spacing:2px;color:#555;border-bottom:2px solid #eee;padding-bottom:6px;margin-bottom:14px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.cell{background:#f8f9fc;border:1px solid #e0e4ef;border-radius:8px;padding:12px 14px}.cell.full{grid-column:span 2}
+.cell .lbl{font-size:11px;color:#888;margin-bottom:4px}.cell .val{font-size:18px;font-weight:800;font-family:monospace}
+.val.blue{color:#1a56ff}.val.green{color:#00b96b}.val.red{color:#e8354a}.val.orange{color:#e6900a}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:#f0f2f8;padding:8px 10px;text-align:left;font-weight:700;color:#555;border:1px solid #dde}
+td{padding:8px 10px;border:1px solid #dde;color:#333}tr:nth-child(even) td{background:#f9fafd}
+.footer{margin-top:30px;font-size:11px;color:#aaa;text-align:center;font-family:monospace;border-top:1px solid #eee;padding-top:12px}
+</style></head><body>
+<h1>QC.AI INSPECTION REPORT</h1><div class="sub">생성: ${fmt(new Date())} · ROI 방식 검사</div>
+<div class="section"><h2>검사 시간</h2><div class="grid">
+<div class="cell"><div class="lbl">시작</div><div class="val blue">${st}</div></div>
+<div class="cell"><div class="lbl">종료</div><div class="val blue">${et}</div></div>
+<div class="cell full"><div class="lbl">소요</div><div class="val blue">${calcElapsed()}</div></div>
+</div></div>
+<div class="section"><h2>검사 결과</h2><div class="grid">
+<div class="cell"><div class="lbl">총 검사</div><div class="val blue">${stats.total}</div></div>
+<div class="cell"><div class="lbl">양품율</div><div class="val orange">${rate}</div></div>
+<div class="cell"><div class="lbl">양품</div><div class="val green">${stats.good}</div></div>
+<div class="cell"><div class="lbl">불량</div><div class="val red">${stats.bad}</div></div>
+</div></div>
+<div class="section"><h2>불량 이력 (총 ${defects.length}건)</h2>
+<table><thead><tr><th>No.</th><th>발생 시각</th><th>신뢰도</th></tr></thead><tbody>${defectRows}</tbody></table></div>
+<div class="footer">QC.AI PART INSPECTION SYSTEM · Teachable Machine + ROI</div>
+</body></html>`;
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([html],{type:'text/html;charset=utf-8'}));
+  a.download='QC_Report_'+new Date().toISOString().slice(0,10)+'.html';
+  a.click();
+}
+
+function downloadCSV() {
+  const rate=stats.total>0?Math.round(stats.good/stats.total*100)+'%':'-';
+  let csv='\uFEFF항목,값\n';
+  csv+=`시작시간,${startTime?fmt(startTime):'--'}\n종료시간,${endTime?fmt(endTime):(running?fmt(new Date()):'--')}\n`;
+  csv+=`소요시간,${calcElapsed()}\n총검사,${stats.total}\n양품,${stats.good}\n불량,${stats.bad}\n양품율,${rate}\n\n`;
+  csv+='불량이력\nNo.,발생시각,신뢰도\n';
+  defects.forEach((d,i)=>{ csv+=`${i+1},${d.time},${d.conf}%\n`; });
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  a.download='QC_Report_'+new Date().toISOString().slice(0,10)+'.csv';
+  a.click();
+}
+
+// ── 유틸 ────────────────────────────────────────────────────────
+function fmt(d){ return d.getFullYear()+'-'+(d.getMonth()+1).toString().padStart(2,'0')+'-'+d.getDate().toString().padStart(2,'0')+' '+d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0')+':'+d.getSeconds().toString().padStart(2,'0'); }
+function fmtTime(d){ return d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0')+':'+d.getSeconds().toString().padStart(2,'0'); }
+function setLed(s,t){ document.getElementById('led').className='led '+s; document.getElementById('hdStatus').textContent=t; }
+
+// ── 초기화 & 이벤트 ─────────────────────────────────────────────
+init();
+
+// ROI 이벤트 등록
+setupRoiEvents(document.getElementById('overlay'));
+
+// 화면 크기 변경 대응
+new ResizeObserver(()=>{
+  const wrap=document.getElementById('camWrap');
+  const canvas=document.getElementById('overlay');
+  if (wrap.clientWidth>0 && wrap.clientHeight>0) {
+    canvas.width=wrap.clientWidth; canvas.height=wrap.clientHeight;
+  }
+}).observe(document.getElementById('camWrap'));
+</script>
+</body>
+</html>
